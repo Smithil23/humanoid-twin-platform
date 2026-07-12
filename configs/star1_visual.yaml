@@ -1,0 +1,43 @@
+# Same robot as star1.yaml but keeps the CAD meshes for 3D viewing.
+# Requires the STAR1 mesh files to exist at the paths referenced inside
+# the URDF (on this machine: C:/Users/smith/Desktop/Simulation_STAR1/...).
+robot:
+  urdf: assets/star1_fixed.urdf
+  root_link: base_link
+  mesh_mode: visual
+  mesh_dir: assets/meshes
+
+feet:
+  links: [left_ankle_roll_link, right_ankle_roll_link]
+  size:   [0.22, 0.10, 0.03]
+  offset: [0.02, 0.0, -0.045]
+
+gains:
+  groups:
+    legs_prox:  {kp: 900, kv: 60, torque_limit: 250}
+    legs_dist:  {kp: 700, kv: 45, torque_limit: 250}
+    arms:       {kp: 120, kv: 8,  torque_limit: 60}
+    neck:       {kp: 25,  kv: 2,  torque_limit: 10}
+    fingers:    {kp: 2,   kv: 0.2, torque_limit: 3}
+  patterns:
+    legs_prox:  [hip, knee]
+    legs_dist:  [ankle, waist]
+    arms:       [shoulder, elbow, arm_yaw, wrist]
+    neck:       [neck, head, mic]
+    fingers:    [hand]
+  default:      {kp: 50, kv: 4, torque_limit: 30}
+
+sim:
+  timestep: 0.002
+  integrator: implicitfast
+  friction: 0.9
+  settle_clearance: 0.003
+
+poses:
+  stand:                 # RobotEra-documented upright stance
+    left_hip_pitch_joint: 0.5236     # +30 deg
+    left_knee_joint: -1.0472         # -60 deg
+    left_ankle_pitch_joint: 0.5236   # +30 deg
+    right_hip_pitch_joint: 0.5236
+    right_knee_joint: -1.0472
+    right_ankle_pitch_joint: 0.5236

@@ -1,0 +1,39 @@
+# STAR1 humanoid (30+ actuated DOF, 64 kg, 1.7 m class)
+robot:
+  urdf: assets/star1_fixed.urdf
+  root_link: base_link
+
+feet:
+  links: [left_ankle_roll_link, right_ankle_roll_link]
+  size:   [0.22, 0.10, 0.03]     # sole box [m]
+  offset: [0.02, 0.0, -0.045]    # box center relative to ankle frame [m]
+
+gains:                            # position-actuator gains per joint group
+  groups:
+    legs_prox:  {kp: 900, kv: 60, torque_limit: 250}
+    legs_dist:  {kp: 700, kv: 45, torque_limit: 250}
+    arms:       {kp: 120, kv: 8,  torque_limit: 60}
+    neck:       {kp: 25,  kv: 2,  torque_limit: 10}
+    fingers:    {kp: 2,   kv: 0.2, torque_limit: 3}
+  patterns:                       # first match wins
+    legs_prox:  [hip, knee]
+    legs_dist:  [ankle, waist]
+    arms:       [shoulder, elbow, arm_yaw, wrist]
+    neck:       [neck, head, mic]
+    fingers:    [hand]
+  default:      {kp: 50, kv: 4, torque_limit: 30}
+
+sim:
+  timestep: 0.002
+  integrator: implicitfast
+  friction: 0.9
+  settle_clearance: 0.003
+
+poses:
+  stand:                 # RobotEra-documented upright stance
+    left_hip_pitch_joint: 0.5236     # +30 deg
+    left_knee_joint: -1.0472         # -60 deg
+    left_ankle_pitch_joint: 0.5236   # +30 deg
+    right_hip_pitch_joint: 0.5236
+    right_knee_joint: -1.0472
+    right_ankle_pitch_joint: 0.5236
