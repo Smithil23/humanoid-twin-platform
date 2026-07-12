@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "htp"
+version = "0.1.0"
+description = "Humanoid Twin Platform - URDF in, running digital twin out"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "mujoco>=3.1",
+  "numpy",
+  "pyyaml",
+  "scipy",
+]
+
+[project.optional-dependencies]
+dashboard = ["fastapi", "uvicorn[standard]"]
+gui = ["PySide6", "pyqtgraph"]
+validate = ["pin", "matplotlib"]
+dev = ["pytest", "ruff"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
