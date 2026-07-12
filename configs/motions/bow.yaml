@@ -1,0 +1,14 @@
+# Polite bow: waist pitches forward and returns. Amplitude kept modest
+# so the CoM stays inside the support polygon (no balance control yet).
+name: bow
+duration: 5.0
+loop: false
+keys:
+  - t: 0.0
+    pose: {waist_pitch_joint: 0.0, neck_pitch_joint: 0.0}
+  - t: 1.5
+    pose: {waist_pitch_joint: 0.30, neck_pitch_joint: 0.25}
+  - t: 3.0
+    pose: {waist_pitch_joint: 0.30, neck_pitch_joint: 0.25}
+  - t: 4.5
+    pose: {waist_pitch_joint: 0.0, neck_pitch_joint: 0.0}

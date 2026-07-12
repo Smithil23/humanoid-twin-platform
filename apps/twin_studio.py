@@ -37,10 +37,12 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDockWidget,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
+    QPushButton,
     QSlider,
     QTabWidget,
     QToolBar,
@@ -49,6 +51,7 @@ from PySide6.QtWidgets import (
 )
 
 from htp import PlatformConfig, Simulator
+from htp.keyframes import KeyframePlayer, list_motions
 from htp.trajectory import squat_targets
 
 
@@ -87,6 +90,8 @@ class PhysicsEngine:
         self.desired = dict(self.sim.cfg.poses.stand)
         self.mode = "manual"
         self._squat_t0 = 0.0
+        self._player: KeyframePlayer | None = None
+        self._motion_t0 = 0.0
         self.paused = False
         self.lock = threading.Lock()
         self._run = True
@@ -108,6 +113,25 @@ class PhysicsEngine:
             self.mode = "manual"
             self.desired = dict(self.sim.cfg.poses.stand)
             self.desired.update(pose)
+
+    def play_motion(self, path) -> None:
+        with self.lock:
+            self._player = KeyframePlayer.from_file(
+                path, base=self.sim.cfg.poses.stand)
+            self._motion_t0 = self.sim.data.time
+            self.mode = "motion"
+
+    def stop_motion(self) -> None:
+        with self.lock:
+            if self.mode == "motion":
+                self.mode = "manual"
+
+    def motion_progress(self) -> tuple[str, float] | None:
+        with self.lock:
+            if self.mode != "motion":
+                return None
+            t = self.sim.data.time - self._motion_t0
+            return self._player.name, self._player.progress(t)
 
     def reset(self) -> None:
         with self.lock:
@@ -138,6 +162,11 @@ class PhysicsEngine:
                             tq, period=4.0, depth=1.0, start=0.5,
                             base=self.sim.cfg.poses.stand))
                         if tq > 5.0:
+                            self.mode = "manual"
+                    elif self.mode == "motion":
+                        tm = self.sim.data.time - self._motion_t0
+                        self.desired.update(self._player.targets(tm))
+                        if self._player.finished(tm):
                             self.mode = "manual"
                     max_d = self.max_speed * dt * 5
                     d = self.sim.data
@@ -407,6 +436,65 @@ class FeetDock(QDockWidget):
             bar.setValue(int(min(ff[link], 800)))
 
 
+class MotionDock(QDockWidget):
+    """Motion library: pick a keyframe motion, play/stop, watch progress."""
+
+    def __init__(self, engine: PhysicsEngine, window, parent=None):
+        super().__init__("Motion", parent)
+        self.engine = engine
+        self.window = window
+        self.motions = list_motions()
+
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        self.sel = QComboBox()
+        self.sel.addItems(list(self.motions.keys()))
+        lay.addWidget(self.sel)
+
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        b_play = QPushButton("Play")
+        b_stop = QPushButton("Stop")
+        b_play.clicked.connect(self._play)
+        b_stop.clicked.connect(self._stop)
+        h.addWidget(b_play)
+        h.addWidget(b_stop)
+        lay.addWidget(row)
+
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setFormat("idle")
+        lay.addWidget(self.bar)
+        lay.addStretch(1)
+        self.setWidget(box)
+
+        timer = QTimer(self)
+        timer.timeout.connect(self._tick)
+        timer.start(100)
+
+    def _play(self) -> None:
+        name = self.sel.currentText()
+        if name in self.motions:
+            self.engine.play_motion(self.motions[name])
+            self.window.logdock.log(f"motion: {name}")
+            self.window.sliders.sync()
+
+    def _stop(self) -> None:
+        self.engine.stop_motion()
+        self.window.sliders.sync()
+
+    def _tick(self) -> None:
+        p = self.engine.motion_progress()
+        if p is None:
+            self.bar.setValue(0)
+            self.bar.setFormat("idle")
+        else:
+            name, frac = p
+            self.bar.setValue(int(frac * 100))
+            self.bar.setFormat(f"{name}  %p%")
+
+
 class LogDock(QDockWidget):
     def __init__(self, parent=None):
         super().__init__("Log", parent)
@@ -473,6 +561,9 @@ class StudioWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
                            self.plots)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.feet)
+        self.motion = MotionDock(engine, self, self)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,
+                           self.motion)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
                            self.logdock)
         self.logdock.log("Twin Studio started")

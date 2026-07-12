@@ -1,0 +1,20 @@
+# Friendly wave: right arm raised sideways, forearm oscillates.
+# Side raise (shoulder roll) keeps the CoM centered - balance-safe.
+name: wave
+duration: 6.0
+loop: true
+keys:
+  - t: 0.0
+    pose: {right_shoulder_roll_joint: 0.0, right_elbow_pitch_joint: 0.0}
+  - t: 1.2
+    pose: {right_shoulder_roll_joint: -1.5, right_elbow_pitch_joint: -0.9}
+  - t: 2.0
+    pose: {right_elbow_pitch_joint: -0.3}
+  - t: 2.8
+    pose: {right_elbow_pitch_joint: -0.9}
+  - t: 3.6
+    pose: {right_elbow_pitch_joint: -0.3}
+  - t: 4.4
+    pose: {right_elbow_pitch_joint: -0.9}
+  - t: 5.6
+    pose: {right_shoulder_roll_joint: 0.0, right_elbow_pitch_joint: 0.0}
