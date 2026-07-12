@@ -120,6 +120,60 @@ class Simulator:
                     out[want[b]] += abs(float(f6[0]))
         return out
 
+    def support_polygon(self) -> np.ndarray:
+        """Convex hull (world XY) of the foot-sole corner points, (N,2).
+
+        Corners come from the configured sole boxes attached to the foot
+        links, transformed by each link's current world pose.
+        """
+        f = self.cfg.feet
+        hx, hy, hz = f.size[0] / 2, f.size[1] / 2, f.size[2] / 2
+        ox, oy, oz = f.offset
+        pts = []
+        for link in f.links:
+            bid = mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_BODY, link)
+            R = self.data.xmat[bid].reshape(3, 3)
+            p0 = self.data.xpos[bid]
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    local = np.array([ox + sx * hx, oy + sy * hy, oz - hz])
+                    pts.append((p0 + R @ local)[:2])
+        pts = np.array(pts)
+        # convex hull, gift-wrapping (tiny N, no scipy needed)
+        hull = []
+        start = int(np.argmin(pts[:, 0]))
+        i = start
+        while True:
+            hull.append(i)
+            j = (i + 1) % len(pts)
+            for k in range(len(pts)):
+                c = np.cross(pts[j] - pts[i], pts[k] - pts[i])
+                if c < 0:
+                    j = k
+            i = j
+            if i == start:
+                break
+        return pts[hull]
+
+    def balance_margin(self) -> float:
+        """Signed distance [m] from the CoM ground projection to the
+        support-polygon boundary. Positive inside (stable), negative
+        outside (tipping)."""
+        poly = self.support_polygon()
+        com = self.data.subtree_com[1][:2]
+        n = len(poly)
+        inside = True
+        dmin = np.inf
+        for i in range(n):
+            a, b = poly[i], poly[(i + 1) % n]
+            e = b - a
+            if np.cross(e, com - a) < 0:
+                inside = False
+            t = np.clip(np.dot(com - a, e) / np.dot(e, e), 0, 1)
+            dmin = min(dmin, float(np.linalg.norm(com - (a + t * e))))
+        return dmin if inside else -dmin
+
     def body_xz(self, names: list[str]) -> list[tuple[float, float]]:
         """(x, z) world positions of named bodies - for the skeleton view."""
         out = []

@@ -70,8 +70,7 @@ JOINT_GROUPS = {
 }
 
 PRESETS = {
-    "Arms forward": {"left_shoulder_pitch_joint": -1.2,
-                     "right_shoulder_pitch_joint": -1.2},
+    "Right arm forward": {"right_shoulder_pitch_joint": -0.9},
     "T-pose": {"left_shoulder_roll_joint": 1.3,
                "right_shoulder_roll_joint": -1.3},
     "Look left": {"neck_yaw_joint": 0.9},
@@ -164,6 +163,7 @@ class Viewport3D(QWidget):
         self.cam.distance = 3.0
         self.cam.lookat[:] = [0.0, 0.0, 0.9]
         self.vopt = mujoco.MjvOption()
+        self.show_balance = False
         self._renderer: mujoco.Renderer | None = None
         self._frame: QImage | None = None
         self._last_pos = None
@@ -189,6 +189,8 @@ class Viewport3D(QWidget):
             self._renderer.update_scene(
                 self.engine.sim.data, camera=self.cam,
                 scene_option=self.vopt)
+            if self.show_balance:
+                self._draw_balance_overlay()
         px = self._renderer.render()              # (H, W, 3) uint8
         h, w, _ = px.shape
         self._frame = QImage(
@@ -223,6 +225,56 @@ class Viewport3D(QWidget):
     def wheelEvent(self, ev) -> None:
         self.cam.distance = float(np.clip(
             self.cam.distance * 0.999 ** ev.angleDelta().y(), 0.5, 12))
+
+    def _add_geom(self) -> "mujoco.MjvGeom | None":
+        scn = self._renderer.scene
+        if scn.ngeom >= scn.maxgeom:
+            return None
+        g = scn.geoms[scn.ngeom]
+        scn.ngeom += 1
+        mujoco.mjv_initGeom(
+            g, mujoco.mjtGeom.mjGEOM_SPHERE, np.zeros(3),
+            np.zeros(3), np.eye(3).flatten(),
+            np.array([1, 1, 1, 1], dtype=np.float32))
+        return g
+
+    def _draw_balance_overlay(self) -> None:
+        """CoM ground projection (dot) + support polygon (lines).
+        Green while stable, red when the margin goes negative."""
+        sim = self.engine.sim
+        poly = sim.support_polygon()
+        margin = sim.balance_margin()
+        col = ([0.2, 0.9, 0.4, 0.9] if margin > 0.02 else
+               [0.95, 0.75, 0.1, 0.9] if margin > 0 else
+               [0.95, 0.25, 0.2, 0.9])
+        col = np.array(col, dtype=np.float32)
+        # polygon edges
+        for i in range(len(poly)):
+            a, b = poly[i], poly[(i + 1) % len(poly)]
+            g = self._add_geom()
+            if g is None:
+                return
+            mujoco.mjv_connector(
+                g, mujoco.mjtGeom.mjGEOM_LINE, 4,
+                np.array([a[0], a[1], 0.006]),
+                np.array([b[0], b[1], 0.006]))
+            g.rgba[:] = col
+        # CoM projection dot
+        com = sim.data.subtree_com[1]
+        g = self._add_geom()
+        if g is not None:
+            g.type = mujoco.mjtGeom.mjGEOM_SPHERE
+            g.size[:] = [0.02, 0.02, 0.02]
+            g.pos[:] = [com[0], com[1], 0.02]
+            g.rgba[:] = col
+        # vertical drop line from actual CoM to floor
+        g = self._add_geom()
+        if g is not None:
+            mujoco.mjv_connector(
+                g, mujoco.mjtGeom.mjGEOM_LINE, 2,
+                np.array([com[0], com[1], com[2]]),
+                np.array([com[0], com[1], 0.01]))
+            g.rgba[:] = np.array([1, 1, 1, 0.5], dtype=np.float32)
 
     def toggle_contacts(self, on: bool) -> None:
         f = mujoco.mjtVisFlag
@@ -399,6 +451,11 @@ class StudioWindow(QMainWindow):
         cb.toggled.connect(self.view.toggle_contacts)
         tb.addWidget(cb)
 
+        cb2 = QCheckBox("Balance")
+        cb2.toggled.connect(
+            lambda on: setattr(self.view, "show_balance", on))
+        tb.addWidget(cb2)
+
         tb.addSeparator()
         tb.addWidget(QLabel(" Preset: "))
         self.preset_box = QComboBox()
@@ -446,11 +503,13 @@ class StudioWindow(QMainWindow):
 
     def _update_status(self) -> None:
         s = self.engine.status()
+        with self.engine.lock:
+            margin = self.engine.sim.balance_margin()
         up = "upright" if s["up"] else "FALLEN - press Reset"
         self.statusBar().showMessage(
             f't = {s["t"]:7.2f} s    base z = {s["z"]:.3f} m    '
             f'ground = {s["fz"]:5.0f} N    contacts = {s["ncon"]}    '
-            f'{s["mode"]}    {up}')
+            f'margin = {margin * 100:+.1f} cm    {s["mode"]}    {up}')
         if self._was_up and not s["up"]:
             self.logdock.log("WARNING: robot fell - press Reset")
         self._was_up = s["up"]
