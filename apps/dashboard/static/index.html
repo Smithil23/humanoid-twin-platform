@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Humanoid Twin — telemetry</title>
+<style>
+  :root{
+    --bg:#101418; --panel:#161c22; --line:#232c35;
+    --ink:#c9d4dc; --dim:#5f7080;
+    --trace:#39c6b4;         /* oscilloscope teal */
+    --trace2:#e0a63c;        /* amber, second channel */
+    --alarm:#e05c4b;
+    --grid:#1b232b;
+  }
+  *{box-sizing:border-box; margin:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:14px/1.45 ui-monospace,"Cascadia Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    min-height:100vh; padding:20px;
+  }
+  header{display:flex; align-items:baseline; gap:14px; margin-bottom:18px}
+  header h1{font-size:15px; font-weight:600; letter-spacing:.12em; text-transform:uppercase}
+  header .sub{color:var(--dim); font-size:12px}
+  #status{margin-left:auto; font-size:12px; padding:3px 10px; border:1px solid var(--line); border-radius:2px}
+  #status.up{color:var(--trace); border-color:var(--trace)}
+  #status.down{color:var(--alarm); border-color:var(--alarm)}
+
+  .grid{display:grid; grid-template-columns:280px 1fr 1fr; gap:14px}
+  @media (max-width:900px){ .grid{grid-template-columns:1fr} }
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:14px}
+  .panel h2{font-size:11px; font-weight:600; color:var(--dim);
+            letter-spacing:.14em; text-transform:uppercase; margin-bottom:10px}
+
+  /* readouts */
+  .kv{display:grid; grid-template-columns:1fr auto; row-gap:7px; font-size:13px}
+  .kv b{font-weight:400; color:var(--dim)}
+  .kv span{font-variant-numeric:tabular-nums}
+  .controls{display:flex; gap:8px; margin-top:14px}
+  button{
+    flex:1; background:none; border:1px solid var(--trace); color:var(--trace);
+    font:inherit; font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+    padding:8px 0; border-radius:2px; cursor:pointer;
+  }
+  button:hover{background:var(--trace); color:var(--bg)}
+  button:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+  button.secondary{border-color:var(--dim); color:var(--dim)}
+  button.secondary:hover{background:var(--dim); color:var(--bg)}
+
+  canvas{width:100%; height:260px; display:block; background:
+    repeating-linear-gradient(0deg,transparent 0 24px,var(--grid) 24px 25px),
+    repeating-linear-gradient(90deg,transparent 0 24px,var(--grid) 24px 25px)}
+  .legend{display:flex; gap:16px; margin-top:8px; font-size:11px; color:var(--dim)}
+  .legend i{display:inline-block; width:14px; height:2px; vertical-align:middle; margin-right:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Humanoid Twin</h1>
+  <span class="sub">STAR1 · 64 kg · MuJoCo core</span>
+  <span id="status">connecting…</span>
+</header>
+
+<div class="grid">
+  <section class="panel">
+    <h2>State</h2>
+    <div class="kv">
+      <b>sim time</b><span id="t">–</span>
+      <b>base height</b><span id="z">–</span>
+      <b>COM x / y</b><span id="com">–</span>
+      <b>ground reaction</b><span id="fz">–</span>
+      <b>contacts</b><span id="ncon">–</span>
+      <b>mode</b><span id="mode">–</span>
+    </div>
+    <div class="controls">
+      <button id="squat">Squat</button>
+      <button id="reset" class="secondary">Reset</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Base height &amp; ground reaction</h2>
+    <canvas id="chart" width="640" height="260"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--trace)"></i>base z [m]</span>
+      <span><i style="background:var(--trace2)"></i>ΣF<sub>z</sub> [kN]</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Skeleton · sagittal view</h2>
+    <canvas id="skel" width="640" height="260"></canvas>
+    <div class="legend"><span>live link positions, 1 s afterglow</span></div>
+  </section>
+</div>
+
+<section class="panel" style="margin-top:14px">
+  <h2>Joint control</h2>
+  <div id="groups" style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap"></div>
+  <div id="sliders" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:10px 24px"></div>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const hist = [];            // {t, z, fz}
+const ghost = [];           // previous skeletons for afterglow
+
+const ws = new WebSocket(`ws://${location.host}/ws`);
+ws.onopen  = () => { $('status').textContent = 'live';    $('status').className = 'up'; };
+ws.onclose = () => { $('status').textContent = 'offline'; $('status').className = 'down'; };
+
+ws.onmessage = ev => {
+  const s = JSON.parse(ev.data);
+  $('t').textContent    = s.t.toFixed(2) + ' s';
+  $('z').textContent    = s.z.toFixed(3) + ' m';
+  $('com').textContent  = s.com[0].toFixed(3) + ' / ' + s.com[1].toFixed(3);
+  $('fz').textContent   = s.fz.toFixed(0) + ' N';
+  $('ncon').textContent = s.ncon;
+  $('mode').textContent = s.mode + (s.upright ? '' : ' · TILTED');
+
+  hist.push({t: s.t, z: s.z, fz: s.fz});
+  if (hist.length > 300) hist.shift();
+  ghost.push(s.skel);
+  if (ghost.length > 30) ghost.shift();
+  drawChart(); drawSkel();
+};
+
+$('squat').onclick = () => ws.send(JSON.stringify({cmd:'squat'}));
+
+let jointDir = {};
+fetch('/joints').then(r => r.json()).then(d => {
+  jointDir = d;
+  const groups = Object.keys(d);
+  groups.forEach((g,i) => {
+    const b = document.createElement('button');
+    b.textContent = g; b.className = i ? 'secondary' : '';
+    b.style.flex = 'none'; b.style.padding = '5px 14px';
+    b.onclick = () => { document.querySelectorAll('#groups button')
+        .forEach(x => x.className = 'secondary');
+      b.className = ''; renderSliders(g); };
+    $('groups').appendChild(b);
+  });
+  renderSliders(groups[0]);
+});
+
+function renderSliders(group){
+  const host = $('sliders'); host.innerHTML = '';
+  jointDir[group].forEach(j => {
+    const row = document.createElement('div');
+    const short = j.name.replace(/_joint$/,'').replace(/_/g,' ');
+    row.innerHTML = `
+      <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:3px">
+        <span style="color:var(--dim)">${short}</span>
+        <span id="v_${j.name}" style="font-variant-numeric:tabular-nums">${j.value.toFixed(2)}</span>
+      </div>
+      <input type="range" min="${j.min}" max="${j.max}" step="0.01" value="${j.value}"
+             style="width:100%; accent-color:var(--trace)"
+             oninput="sendTarget('${j.name}', this.value)">`;
+    host.appendChild(row);
+  });
+}
+
+function sendTarget(name, v){
+  $('v_'+name).textContent = (+v).toFixed(2);
+  ws.send(JSON.stringify({cmd:'target', joint:name, value:+v}));
+}
+$('reset').onclick = () => { hist.length = 0; ghost.length = 0;
+                             ws.send(JSON.stringify({cmd:'reset'})); };
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n);
+
+function drawChart(){
+  const c = $('chart'), g = c.getContext('2d');
+  g.clearRect(0,0,c.width,c.height);
+  if (hist.length < 2) return;
+  const t0 = hist[0].t, t1 = hist[hist.length-1].t || 1;
+  const X = t => 6 + (c.width-12) * (t - t0) / Math.max(t1 - t0, 1e-6);
+  const line = (key, ymin, ymax, color) => {
+    g.strokeStyle = color; g.lineWidth = 1.6; g.beginPath();
+    hist.forEach((p,i) => {
+      const y = c.height - 8 - (c.height-16)*(p[key]-ymin)/(ymax-ymin);
+      i ? g.lineTo(X(p.t), y) : g.moveTo(X(p.t), y);
+    });
+    g.stroke();
+  };
+  line('z',  0.0, 1.2,  css('--trace'));
+  line('fz', 0.0, 1500, css('--trace2'));
+}
+
+function drawSkel(){
+  const c = $('skel'), g = c.getContext('2d');
+  g.clearRect(0,0,c.width,c.height);
+  // world window: x in [-0.8, 0.8], z in [-0.05, 1.9]
+  const P = ([x,z]) => [ c.width/2 + x*(c.width/1.8),
+                         c.height - 12 - z*(c.height/1.95) ];
+  // floor
+  g.strokeStyle = css('--dim'); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, c.height-12); g.lineTo(c.width, c.height-12); g.stroke();
+  ghost.forEach((sk, i) => {
+    const a = (i+1) / ghost.length;
+    g.strokeStyle = `rgba(57,198,180,${0.08 + 0.72*a*a})`;
+    g.lineWidth = i === ghost.length-1 ? 2.2 : 1;
+    g.beginPath();
+    sk.forEach((pt,j) => { const [px,py] = P(pt);
+                           j ? g.lineTo(px,py) : g.moveTo(px,py); });
+    g.stroke();
+    if (i === ghost.length-1)
+      sk.forEach(pt => { const [px,py] = P(pt);
+        g.fillStyle = css('--trace'); g.beginPath();
+        g.arc(px,py,2.6,0,7); g.fill(); });
+  });
+}
+</script>
+</body>
+</html>
