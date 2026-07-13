@@ -95,6 +95,7 @@ class PhysicsEngine:
         self._motion_t0 = 0.0
         self.balance = BalanceController(self.sim)
         self.balance_on = False
+        self.com_ref = (0.0, 0.0)
         self._push_until = 0.0
         self._push_force = 0.0
         self.paused = False
@@ -130,6 +131,7 @@ class PhysicsEngine:
         with self.lock:
             if self.mode == "motion":
                 self.mode = "manual"
+                self.com_ref = (0.0, 0.0)
 
     def motion_progress(self) -> tuple[str, float] | None:
         with self.lock:
@@ -146,6 +148,7 @@ class PhysicsEngine:
             self.sim.data.xfrc_applied[1, :] = 0
             self._push_until = 0.0        # sim clock rewinds on reset;
             self._push_force = 0.0        # a stale deadline re-pushes
+            self.com_ref = (0.0, 0.0)
             self.mode = "manual"
 
     def push(self, force_n: float = 160.0, duration: float = 0.15) -> None:
@@ -180,9 +183,15 @@ class PhysicsEngine:
                             self.mode = "manual"
                     elif self.mode == "motion":
                         tm = self.sim.data.time - self._motion_t0
-                        self.desired.update(self._player.targets(tm))
+                        tgt = self._player.targets(tm)
+                        # com_x / com_y are pattern tracks, not joints:
+                        # they command the balance controller's target
+                        self.com_ref = (tgt.pop("com_x", 0.0),
+                                        tgt.pop("com_y", 0.0))
+                        self.desired.update(tgt)
                         if self._player.finished(tm):
                             self.mode = "manual"
+                            self.com_ref = (0.0, 0.0)
                     max_d = self.max_speed * dt * 5
                     d = self.sim.data
                     for name, want in self.desired.items():
@@ -193,7 +202,8 @@ class PhysicsEngine:
                     # the full physics rate (feedback quality depends on it)
                     for _ in range(5):
                         if self.balance_on:
-                            op, orr = self.balance.update(dt)
+                            op, orr = self.balance.update(
+                                dt, ref=self.com_ref)
                             for j in BalanceController.ANKLE_PITCH:
                                 a = self.sim.act_index[f"{j}_act"]
                                 d.ctrl[a] = self.desired.get(j, 0.0) + op
@@ -504,10 +514,20 @@ class MotionDock(QDockWidget):
 
     def _play(self) -> None:
         name = self.sel.currentText()
-        if name in self.motions:
-            self.engine.play_motion(self.motions[name])
-            self.window.logdock.log(f"motion: {name}")
-            self.window.sliders.sync()
+        if name not in self.motions:
+            return
+        self.engine.play_motion(self.motions[name])
+        # motions with CoM tracks need the balance controller running
+        with self.engine.lock:
+            needs_balance = any(
+                k.startswith("com_") for k in self.engine._player.tracks)
+        if needs_balance and not self.engine.balance_on:
+            self.engine.balance.reset()
+            self.engine.balance_on = True
+            self.window.logdock.log(
+                "balance controller ENABLED (required by motion)")
+        self.window.logdock.log(f"motion: {name}")
+        self.window.sliders.sync()
 
     def _stop(self) -> None:
         self.engine.stop_motion()

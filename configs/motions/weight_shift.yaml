@@ -1,0 +1,29 @@
+# Lateral weight shift: the CoM sways left/right between the feet.
+# First milestone on the road to stepping - before a foot can lift,
+# the weight must be off it.
+#
+# How it works (two cooperating layers):
+#   com_y  - not a joint: a CoM reference track that the balance
+#            controller executes through the ankles (pattern-generator
+#            -> feedback architecture)
+#   waist_roll - upper-body lean feedforward; adds lateral authority
+#            without violating the closed leg-ground kinematic chain
+#            (hip-roll feedforward wedges the chain and topples - the
+#            reason real robots need torque-controlled hip strategy)
+#
+# Requires the balance controller (the Studio enables it automatically).
+# Measured result: stance foot ~490 N, unloaded foot down to ~2 N.
+name: weight_shift
+duration: 6.0
+loop: true
+keys:
+  - t: 0.0
+    pose: {com_y: 0.0, waist_roll_joint: 0.0}
+  - t: 1.5
+    pose: {com_y: 0.05, waist_roll_joint: -0.25}
+  - t: 3.0
+    pose: {com_y: 0.0, waist_roll_joint: 0.0}
+  - t: 4.5
+    pose: {com_y: -0.05, waist_roll_joint: 0.25}
+  - t: 6.0
+    pose: {com_y: 0.0, waist_roll_joint: 0.0}

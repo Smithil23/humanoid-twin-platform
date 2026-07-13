@@ -52,8 +52,16 @@ class BalanceController:
         self._prev_com = None
         self._off[:] = 0.0
 
-    def update(self, dt: float) -> tuple[float, float]:
-        """Return (ankle_pitch_offset, ankle_roll_offset) in rad."""
+    def update(self, dt: float,
+               ref: tuple[float, float] = (0.0, 0.0)) -> tuple[float, float]:
+        """Return (ankle_pitch_offset, ankle_roll_offset) in rad.
+
+        ``ref`` is a CoM target offset [m] from the support-polygon
+        centroid: (0, 0) means "stand centered"; a motion layer can
+        command e.g. (0, +0.05) to deliberately shift weight left.
+        The controller then steers the capture point to that spot
+        instead of fighting the motion.
+        """
         sim = self.sim
         # only act with real double support
         if len({c for c in range(sim.data.ncon)}) < 2:
@@ -72,7 +80,7 @@ class BalanceController:
         # instantaneous capture point (LIPM): where the CoM will land
         omega = np.sqrt(max(com3[2], 0.3) / 9.81)
         cp = com + vel * omega
-        err = cp - center
+        err = cp - (center + np.asarray(ref))
 
         # signs measured on STAR1: +ankle_pitch pushes the CoM backward
         # (-x), +ankle_roll pushes it +y  ->  corrective mapping:
