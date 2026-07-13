@@ -120,17 +120,23 @@ class Simulator:
                     out[want[b]] += abs(float(f6[0]))
         return out
 
-    def support_polygon(self) -> np.ndarray:
-        """Convex hull (world XY) of the foot-sole corner points, (N,2).
+    def support_polygon(self, min_force: float = 30.0) -> np.ndarray:
+        """Convex hull (world XY) of the sole corners of LOADED feet.
 
-        Corners come from the configured sole boxes attached to the foot
-        links, transformed by each link's current world pose.
+        A foot carrying less than ``min_force`` [N] is airborne (or
+        nearly) and does not contribute support - during a single-leg
+        stand the polygon correctly collapses to the stance foot.
+        Falls back to all feet if none are loaded (mid-air/fallen).
         """
+        forces = self.foot_forces()
+        links = [k for k in self.cfg.feet.links if forces[k] >= min_force]
+        if not links:
+            links = list(self.cfg.feet.links)
         f = self.cfg.feet
         hx, hy, hz = f.size[0] / 2, f.size[1] / 2, f.size[2] / 2
         ox, oy, oz = f.offset
         pts = []
-        for link in f.links:
+        for link in links:
             bid = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_BODY, link)
             R = self.data.xmat[bid].reshape(3, 3)

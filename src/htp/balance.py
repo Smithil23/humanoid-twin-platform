@@ -93,3 +93,11 @@ class BalanceController:
 
     ANKLE_PITCH = ("left_ankle_pitch_joint", "right_ankle_pitch_joint")
     ANKLE_ROLL = ("left_ankle_roll_joint", "right_ankle_roll_joint")
+
+    def stance_sides(self, min_force: float = 30.0) -> tuple[str, ...]:
+        """Which sides currently bear load ('left', 'right')."""
+        ff = self.sim.foot_forces()
+        out = tuple(
+            ("left" if "left" in k else "right")
+            for k, v in ff.items() if v >= min_force)
+        return out or ("left", "right")

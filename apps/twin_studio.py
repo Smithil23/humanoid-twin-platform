@@ -204,10 +204,15 @@ class PhysicsEngine:
                         if self.balance_on:
                             op, orr = self.balance.update(
                                 dt, ref=self.com_ref)
+                            sides = self.balance.stance_sides()
                             for j in BalanceController.ANKLE_PITCH:
+                                if j.split("_")[0] not in sides:
+                                    continue     # swing ankle: motion owns it
                                 a = self.sim.act_index[f"{j}_act"]
                                 d.ctrl[a] = self.desired.get(j, 0.0) + op
                             for j in BalanceController.ANKLE_ROLL:
+                                if j.split("_")[0] not in sides:
+                                    continue
                                 a = self.sim.act_index[f"{j}_act"]
                                 d.ctrl[a] = self.desired.get(j, 0.0) + orr
                         d.xfrc_applied[1, 0] = (
