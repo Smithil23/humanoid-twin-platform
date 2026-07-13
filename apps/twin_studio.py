@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 )
 
 from htp import PlatformConfig, Simulator
+from htp.balance import BalanceController
 from htp.keyframes import KeyframePlayer, list_motions
 from htp.trajectory import squat_targets
 
@@ -92,6 +93,10 @@ class PhysicsEngine:
         self._squat_t0 = 0.0
         self._player: KeyframePlayer | None = None
         self._motion_t0 = 0.0
+        self.balance = BalanceController(self.sim)
+        self.balance_on = False
+        self._push_until = 0.0
+        self._push_force = 0.0
         self.paused = False
         self.lock = threading.Lock()
         self._run = True
@@ -137,7 +142,17 @@ class PhysicsEngine:
         with self.lock:
             self.sim.reset()
             self.desired = dict(self.sim.cfg.poses.stand)
+            self.balance.reset()
+            self.sim.data.xfrc_applied[1, :] = 0
+            self._push_until = 0.0        # sim clock rewinds on reset;
+            self._push_force = 0.0        # a stale deadline re-pushes
             self.mode = "manual"
+
+    def push(self, force_n: float = 160.0, duration: float = 0.15) -> None:
+        """Shove the torso forward - the balance controller's exam."""
+        with self.lock:
+            self._push_force = force_n
+            self._push_until = self.sim.data.time + duration
 
     def stop(self) -> None:
         self._run = False
@@ -174,7 +189,21 @@ class PhysicsEngine:
                         a = self.sim.act_index[f"{name}_act"]
                         d.ctrl[a] += max(-max_d,
                                          min(max_d, want - d.ctrl[a]))
-                    self.sim.step(5)
+                    # inner loop: balance feedback and push window run at
+                    # the full physics rate (feedback quality depends on it)
+                    for _ in range(5):
+                        if self.balance_on:
+                            op, orr = self.balance.update(dt)
+                            for j in BalanceController.ANKLE_PITCH:
+                                a = self.sim.act_index[f"{j}_act"]
+                                d.ctrl[a] = self.desired.get(j, 0.0) + op
+                            for j in BalanceController.ANKLE_ROLL:
+                                a = self.sim.act_index[f"{j}_act"]
+                                d.ctrl[a] = self.desired.get(j, 0.0) + orr
+                        d.xfrc_applied[1, 0] = (
+                            self._push_force
+                            if d.time < self._push_until else 0.0)
+                        self.sim.step(1)
             left = dt * 5 - (time.time() - t0)
             if left > 0:
                 time.sleep(left)
@@ -544,6 +573,14 @@ class StudioWindow(QMainWindow):
             lambda on: setattr(self.view, "show_balance", on))
         tb.addWidget(cb2)
 
+        cb3 = QCheckBox("Balance ctrl")
+        cb3.toggled.connect(self._toggle_balance)
+        tb.addWidget(cb3)
+
+        act_push = QAction("Push", self)
+        act_push.triggered.connect(self._do_push)
+        tb.addAction(act_push)
+
         tb.addSeparator()
         tb.addWidget(QLabel(" Preset: "))
         self.preset_box = QComboBox()
@@ -578,6 +615,16 @@ class StudioWindow(QMainWindow):
         self.engine.apply_pose(PRESETS.get(name, {}))
         self.sliders.sync()
         self.logdock.log(f"preset: {name}")
+
+    def _toggle_balance(self, on: bool) -> None:
+        self.engine.balance.reset()
+        self.engine.balance_on = on
+        self.logdock.log(
+            f"balance controller {'ENABLED' if on else 'disabled'}")
+
+    def _do_push(self) -> None:
+        self.engine.push(160.0)
+        self.logdock.log("push: 160 N forward, 0.15 s")
 
     def _do_reset(self) -> None:
         self.engine.reset()
