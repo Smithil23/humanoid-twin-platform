@@ -69,6 +69,11 @@ class StepParams:
     f_stance: float = 250.0    # ...and stance must carry at least this
     f_loaded: float = 60.0     # swing counts as landed above [N]
     debounce: float = 0.10     # condition must hold this long [s]
+    # forward walking (stride=0 -> march in place):
+    stride: float = 0.0        # swing hip-pitch forward offset [rad]
+                               # (negative hip pitch swings the leg
+                               #  forward; positive stride -> forward step)
+    lean: float = 0.0          # forward CoM lean during double support [m]
 
 
 def _ease(u: float) -> float:
@@ -132,7 +137,7 @@ class Stepper:
         # once airborne the support polygon collapses to the stance
         # foot, so the CoM reference must relax to near-center of it
         self._begin("LIFT", self.p.t_up, {
-            f"{s}_hip_pitch_joint": STAND_HIP + self.p.hip_d,
+            f"{s}_hip_pitch_joint": STAND_HIP + self.p.hip_d - self.p.stride,
             f"{s}_knee_joint": STAND_KNEE + self.p.knee_d,
             f"{s}_ankle_pitch_joint": STAND_HIP + self.p.ankle_d,
             "com_y": sgn * 0.01,
@@ -140,10 +145,16 @@ class Stepper:
 
     def _enter_land(self) -> None:
         s = self.swing
+        # plant forward: the swing hip lands advanced by `stride`, and
+        # the STANCE hip retracts by the same amount so the body glides
+        # forward over the new base (this is what makes it travel, not
+        # just paw the ground)
+        st = "right" if s == "left" else "left"
         self._begin("LAND", self.p.t_down, {
-            f"{s}_hip_pitch_joint": STAND_HIP,
+            f"{s}_hip_pitch_joint": STAND_HIP - self.p.stride,
             f"{s}_knee_joint": STAND_KNEE,
             f"{s}_ankle_pitch_joint": STAND_HIP,
+            f"{st}_hip_pitch_joint": STAND_HIP + self.p.stride,
         })
 
     def _enter_settle(self) -> None:
