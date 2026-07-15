@@ -19,10 +19,14 @@ def test_weight_shift_transfers_load_and_stays_up():
         tgt = player.targets(sim.data.time - t0)
         ref = (tgt.pop("com_x", 0.0), tgt.pop("com_y", 0.0))
         op, orr = bal.update(dt, ref=ref)
-        for j in BalanceController.ANKLE_PITCH:
-            tgt[j] = tgt.get(j, 0.0) + op
-        for j in BalanceController.ANKLE_ROLL:
+        hp, hr = bal.hip_offsets()      # hip strategy is part of the
+        for j in BalanceController.ANKLE_PITCH:   # controller now; apply
+            tgt[j] = tgt.get(j, 0.0) + op         # its full output as
+        for j in BalanceController.ANKLE_ROLL:    # the Studio does
             tgt[j] = tgt.get(j, 0.0) + orr
+        wp, wr = BalanceController.WAIST
+        tgt[wp] = tgt.get(wp, 0.0) + hp
+        tgt[wr] = tgt.get(wr, 0.0) + hr
         sim.set_joint_targets(tgt)
         sim.step()
         assert sim.upright, "fell during weight shift"

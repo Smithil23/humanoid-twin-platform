@@ -40,17 +40,27 @@ from .sim import Simulator
 class BalanceController:
     def __init__(self, sim: Simulator,
                  kp: float = 2.8,
-                 max_offset: float = 0.20, smooth: float = 0.35):
+                 max_offset: float = 0.20, smooth: float = 0.35,
+                 hip_kp: float = 2.5, hip_kd: float = 0.5,
+                 hip_max: float = 0.35):
         self.sim = sim
         self.kp = kp
         self.max_offset = max_offset
         self.smooth = smooth            # low-pass factor per tick
+        # hip strategy: waist counter-rotation driven by capture-point
+        # error - a much larger corrective lever than the ankles, and it
+        # works in single support where ankle authority is tiny.
+        self.hip_kp = hip_kp
+        self.hip_kd = hip_kd
+        self.hip_max = hip_max
         self._prev_com: np.ndarray | None = None
-        self._off = np.zeros(2)         # [pitch, roll] current offsets
+        self._off = np.zeros(2)         # [pitch, roll] ankle offsets
+        self._hip = np.zeros(2)         # [pitch, roll] waist offsets
 
     def reset(self) -> None:
         self._prev_com = None
         self._off[:] = 0.0
+        self._hip[:] = 0.0
 
     def update(self, dt: float,
                ref: tuple[float, float] = (0.0, 0.0)) -> tuple[float, float]:
@@ -63,11 +73,6 @@ class BalanceController:
         instead of fighting the motion.
         """
         sim = self.sim
-        # only act with real double support
-        if len({c for c in range(sim.data.ncon)}) < 2:
-            self._off *= 0.9
-            return tuple(self._off)
-
         com3 = sim.data.subtree_com[1]
         com = com3[:2].copy()
         center = sim.support_polygon().mean(axis=0)
@@ -82,14 +87,32 @@ class BalanceController:
         cp = com + vel * omega
         err = cp - (center + np.asarray(ref))
 
-        # signs measured on STAR1: +ankle_pitch pushes the CoM backward
-        # (-x), +ankle_roll pushes it +y  ->  corrective mapping:
-        raw_pitch = +self.kp * err[0]
-        raw_roll = -self.kp * err[1]
-        raw = np.clip([raw_pitch, raw_roll],
-                      -self.max_offset, self.max_offset)
-        self._off += self.smooth * (raw - self._off)
+        double_support = sim.data.ncon >= 4
+        if double_support:
+            # ankle strategy: only meaningful with foot leverage on ground
+            raw_pitch = +self.kp * err[0]
+            raw_roll = -self.kp * err[1]
+            raw = np.clip([raw_pitch, raw_roll],
+                          -self.max_offset, self.max_offset)
+            self._off += self.smooth * (raw - self._off)
+        else:
+            self._off *= 0.9      # relax ankles when airborne / single
+
+        # hip strategy: waist counter-rotation on capture-point error +
+        # velocity damping. Works in BOTH support phases - this is what
+        # extends single-support balance beyond the ankle-only ceiling.
+        # waist_pitch counter-rotates fore/aft; waist_roll lateral.
+        hip_pitch = self.hip_kp * err[0] + self.hip_kd * vel[0]
+        hip_roll = -(self.hip_kp * err[1] + self.hip_kd * vel[1])
+        hraw = np.clip([hip_pitch, hip_roll], -self.hip_max, self.hip_max)
+        self._hip += self.smooth * (hraw - self._hip)
         return float(self._off[0]), float(self._off[1])
+
+    def hip_offsets(self) -> tuple[float, float]:
+        """Waist (pitch, roll) offsets from the last update() call."""
+        return float(self._hip[0]), float(self._hip[1])
+
+    WAIST = ("waist_pitch_joint", "waist_roll_joint")
 
     ANKLE_PITCH = ("left_ankle_pitch_joint", "right_ankle_pitch_joint")
     ANKLE_ROLL = ("left_ankle_roll_joint", "right_ankle_roll_joint")

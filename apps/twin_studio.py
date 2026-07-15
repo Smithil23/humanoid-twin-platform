@@ -210,15 +210,43 @@ class PhysicsEngine:
                         a = self.sim.act_index[f"{name}_act"]
                         d.ctrl[a] += max(-max_d,
                                          min(max_d, want - d.ctrl[a]))
+                    # march: use the exact verified recipe via
+                    # set_joint_targets (proven 162 steps/2min). Runs
+                    # once per outer tick, stepping physics 5 sub-steps.
+                    if self.mode == "march":
+                        base = dict(self.sim.cfg.poses.stand)
+                        for _ in range(5):
+                            jt, ref = self.stepper.update(dt)
+                            self.com_ref = ref
+                            op, orr = self.balance.update(dt, ref=ref)
+                            sides = self.balance.stance_sides()
+                            hp, hr = self.balance.hip_offsets()
+                            tgt = dict(base)
+                            tgt.update(jt)
+                            for j in BalanceController.ANKLE_PITCH:
+                                if j.split("_")[0] in sides:
+                                    tgt[j] = tgt.get(j, 0.0) + op
+                            for j in BalanceController.ANKLE_ROLL:
+                                if j.split("_")[0] in sides:
+                                    tgt[j] = tgt.get(j, 0.0) + orr
+                            wp, wr = BalanceController.WAIST
+                            tgt[wp] = tgt.get(wp, 0.0) + hp
+                            tgt[wr] = tgt.get(wr, 0.0) + hr
+                            for sh in ("left_shoulder_roll_joint",
+                                       "right_shoulder_roll_joint"):
+                                tgt[sh] = tgt.get(sh, 0.0) + 2.5 * hr
+                            self.sim.set_joint_targets(tgt)
+                            d.xfrc_applied[1, 0] = (
+                                self._push_force
+                                if d.time < self._push_until else 0.0)
+                            self.sim.step(1)
+                        left = dt * 5 - (time.time() - t0)
+                        if left > 0:
+                            time.sleep(left)
+                        continue
                     # inner loop: balance feedback and push window run at
                     # the full physics rate (feedback quality depends on it)
                     for _ in range(5):
-                        if self.mode == "march":
-                            jt, ref = self.stepper.update(dt)
-                            self.com_ref = ref
-                            for name, want in jt.items():
-                                a = self.sim.act_index[f"{name}_act"]
-                                d.ctrl[a] = want
                         if self.balance_on:
                             op, orr = self.balance.update(
                                 dt, ref=self.com_ref)
@@ -233,6 +261,16 @@ class PhysicsEngine:
                                     continue
                                 a = self.sim.act_index[f"{j}_act"]
                                 d.ctrl[a] = self.desired.get(j, 0.0) + orr
+                            # hip strategy: waist counter-rotation while
+                            # standing (ankles do most of the work here)
+                            hp, hr = self.balance.hip_offsets()
+                            wp, wr = BalanceController.WAIST
+                            ap = self.sim.act_index[f"{wp}_act"]
+                            ar = self.sim.act_index[f"{wr}_act"]
+                            d.ctrl[ap] = self.desired.get(wp, 0.0) + hp
+                            d.ctrl[ar] = self.desired.get(wr, 0.0) + hr
+                            if False:
+                                pass
                         d.xfrc_applied[1, 0] = (
                             self._push_force
                             if d.time < self._push_until else 0.0)

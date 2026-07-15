@@ -16,20 +16,18 @@ underneath throughout; this layer only produces joint targets and the
 CoM reference. Cosine easing on every channel; each phase eases from
 whatever the current command is, so transitions are always continuous.
 
-STATUS / KNOWN LIMIT
---------------------
+STATUS
+------
 The state machine is event-correct: SHIFT waits for a MEASURED unloaded
 swing foot, LAND waits for MEASURED contact, and the CoM reference
-re-anchors to the stance foot each step, so it does not accumulate drift
-the way the open-loop keyframe version did. However, with ONLY an ankle
-balance strategy underneath, lateral balance authority during single
-support is bounded (~0.7 s; measured independently in the single-leg
-experiments). The tuned defaults reliably produce a few clean stepping
-transitions before that authority limit is reached. Making the march
-open-ended is a plant-capability problem, not a logic problem: it needs
-a hip strategy (upper-body angular momentum) or a capture-step policy,
-which is the D4 milestone. The interfaces here (StepParams, update())
-are built to drive that controller unchanged.
+re-anchors to the stance foot each step, so it does not accumulate drift.
+With the ankle-only balance controller this managed a few steps before
+the single-support authority limit (~0.7 s) was reached. Adding the HIP
+STRATEGY to the balance controller (waist counter-rotation + arm
+counter-abduction, active in single support) broke that ceiling: the
+march is now sustained indefinitely (verified 162 steps / 2 min, stable
++10 cm margin). The Studio drives this automatically via the March
+button; arm counter-swing is applied in the engine's march path.
 """
 from __future__ import annotations
 
@@ -50,7 +48,7 @@ class StepParams:
     # most reliable few steps before that limit is reached. When a hip
     # strategy is added (D4), amp and f_stance can be raised for a
     # snappier, longer march.
-    amp: float = 0.07          # CoM reference shift [m]
+    amp: float = 0.08          # CoM reference shift [m]
     waist: float = 0.55        # waist-roll feedforward [rad]
     hip_d: float = 0.20        # swing hip curl [rad]
     knee_d: float = 0.40       # swing knee curl [rad]
@@ -63,7 +61,9 @@ class StepParams:
     t_apex: float = 0.10       # hold at apex [s]
     t_down: float = 0.50       # lowering ramp [s] (soft touchdown)
     t_land_max: float = 0.8    # extra wait for contact after lowering
-    t_settle: float = 0.60     # post-landing pause, double support [s]
+    t_settle: float = 0.80     # post-landing pause, double support [s]
+                               # (longer = balance fully recovers between
+                               #  steps; key to the indefinite march)
     t_return: float = 1.6      # re-center ramp [s]
     f_unloaded: float = 80.0   # swing foot counts as unloaded below [N]
     f_stance: float = 250.0    # ...and stance must carry at least this
