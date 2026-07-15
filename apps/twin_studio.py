@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 from htp import PlatformConfig, Simulator
 from htp.balance import BalanceController
 from htp.keyframes import KeyframePlayer, list_motions
+from htp.stepper import Stepper
 from htp.trajectory import squat_targets
 
 
@@ -96,6 +97,7 @@ class PhysicsEngine:
         self.balance = BalanceController(self.sim)
         self.balance_on = False
         self.com_ref = (0.0, 0.0)
+        self.stepper = Stepper(self.sim)
         self._push_until = 0.0
         self._push_force = 0.0
         self.paused = False
@@ -107,6 +109,15 @@ class PhysicsEngine:
         with self.lock:
             self.mode = "manual"
             self.desired[joint] = float(value)
+
+    def march(self) -> None:
+        """Start stepping in place (auto-enables the balance controller,
+        which the stepper needs underneath)."""
+        with self.lock:
+            self.balance.reset()
+            self.balance_on = True
+            self.stepper.reset()
+            self.mode = "march"
 
     def squat(self) -> None:
         with self.lock:
@@ -129,7 +140,7 @@ class PhysicsEngine:
 
     def stop_motion(self) -> None:
         with self.lock:
-            if self.mode == "motion":
+            if self.mode in ("motion", "march"):
                 self.mode = "manual"
                 self.com_ref = (0.0, 0.0)
 
@@ -149,6 +160,7 @@ class PhysicsEngine:
             self._push_until = 0.0        # sim clock rewinds on reset;
             self._push_force = 0.0        # a stale deadline re-pushes
             self.com_ref = (0.0, 0.0)
+            self.stepper.reset()
             self.mode = "manual"
 
     def push(self, force_n: float = 160.0, duration: float = 0.15) -> None:
@@ -201,6 +213,12 @@ class PhysicsEngine:
                     # inner loop: balance feedback and push window run at
                     # the full physics rate (feedback quality depends on it)
                     for _ in range(5):
+                        if self.mode == "march":
+                            jt, ref = self.stepper.update(dt)
+                            self.com_ref = ref
+                            for name, want in jt.items():
+                                a = self.sim.act_index[f"{name}_act"]
+                                d.ctrl[a] = want
                         if self.balance_on:
                             op, orr = self.balance.update(
                                 dt, ref=self.com_ref)
@@ -606,6 +624,10 @@ class StudioWindow(QMainWindow):
         act_push.triggered.connect(self._do_push)
         tb.addAction(act_push)
 
+        act_march = QAction("March", self)
+        act_march.triggered.connect(self._do_march)
+        tb.addAction(act_march)
+
         tb.addSeparator()
         tb.addWidget(QLabel(" Preset: "))
         self.preset_box = QComboBox()
@@ -650,6 +672,10 @@ class StudioWindow(QMainWindow):
     def _do_push(self) -> None:
         self.engine.push(160.0)
         self.logdock.log("push: 160 N forward, 0.15 s")
+
+    def _do_march(self) -> None:
+        self.engine.march()
+        self.logdock.log("march: stepping in place (balance ctrl on)")
 
     def _do_reset(self) -> None:
         self.engine.reset()
